@@ -55,7 +55,7 @@ completed_work:
   - what: "Added @earendil-works/pi-schema 1.5.0 and checked it with a throwaway probe."
     evidence: "Probe source /tmp/pi-schema-probe.ts (may be gone after reboot). Its recorded output is in established_facts F30."
   - what: "Drafted the continuation message template."
-    evidence: "contracts.continuation_template in this file. The user has not approved the wording yet."
+    evidence: "contracts.continuation_template in this file. The user approved the wording as written on 2026-11-06."
 
 established_facts:
   # Each fact was read in source on 2026-11-06. "PI/" and "CORE/" refer to source_roots.
@@ -382,7 +382,7 @@ contracts:
         hiddenByCompaction = entry in current and before the latest compaction's firstKeptEntryId
       return newest `limit` hits, excerpt cut to max_chars_per_hit
   continuation_template:
-    status: "DRAFT. Needs user approval (H1). The model reads this text after every handoff."
+    status: "APPROVED by the user as written on 2026-11-06 (H1). The model reads this text after every handoff. Do not change it without asking."
     customType: pi-handoff/continuation
     display: true
     details: ContinuationDetails
@@ -578,7 +578,7 @@ human_decisions:
   H1:
     {
       question: "Approve or edit contracts.continuation_template.content.",
-      default_if_unanswered: "Use the draft as written, and say in the report that the wording is not approved.",
+      answer: "Approved as written on 2026-11-06.",
       blocks: "nothing",
     }
   H2:
