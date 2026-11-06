@@ -584,19 +584,19 @@ human_decisions:
   H2:
     {
       question: "Cancel threshold compaction (current plan) or tell users to set compaction.enabled false, which also disables overflow recovery.",
-      default_if_unanswered: "Cancel threshold compaction only.",
+      answer: "Cancel threshold compaction only. Approved on 2026-11-06.",
       blocks: "nothing",
     }
   H3:
     {
       question: "Plain substring search, or a ranking library (needs approval to add a package).",
-      default_if_unanswered: "Plain substring search.",
+      answer: "Plain case-insensitive substring search. Approved on 2026-11-06.",
       blocks: "nothing",
     }
   H4:
     {
       question: "Who starts a handoff: the model tool, the user command, or both.",
-      default_if_unanswered: "Both.",
+      answer: "Both the model tool and the /handoff command. Approved on 2026-11-06.",
       blocks: "nothing",
     }
 
@@ -606,5 +606,5 @@ report_back:
   - "For each demo D1 to D7: pass, fail, or could not run, with the artifacts path. Could not run is not a pass."
   - "Each assumption A1 to A6: confirmed or refuted, with evidence."
   - "Any established fact the code contradicted, with the source line you read."
-  - "Defaults you applied for H1 to H4."
+  - "Any place where the code could not follow the answers to H1 to H4, and why."
   - "Final `npm run check` and `git status --porcelain` output."
