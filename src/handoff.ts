@@ -212,7 +212,8 @@ const replayHeldInput = (pi: ExtensionAPI, heldInput: readonly string[]) => {
 
 /**
  * Lifecycle step 7, also used by restart recovery: send the continuation, then replay held input as
- * follow-ups. Waits for the continuation turn when it can, so print and rpc runs do not exit first.
+ * follow-ups. With waitForIdle it waits for the continuation turn, so print and rpc runs do not exit
+ * before it.
  */
 export const sendContinuation = async (
   pi: ExtensionAPI,
@@ -220,15 +221,15 @@ export const sendContinuation = async (
   intent: IntentRecord,
   destination: DestinationRecord,
   destinationId: string,
-  waitForIdle?: () => Promise<void>
+  options: { triggerTurn: boolean; waitForIdle?: () => Promise<void> }
 ): Promise<void> => {
   pi.sendMessage(continuationMessage(intent, destination, destinationId), {
-    triggerTurn: true,
+    triggerTurn: options.triggerTurn,
   });
   const heldInput = state.running?.heldInput ?? [];
   state.running = undefined;
   replayHeldInput(pi, heldInput);
-  await waitForIdle?.();
+  await options.waitForIdle?.();
 };
 
 /** Lifecycle steps 3 to 7: navigate to the anchor, write the destination, send the continuation. */
@@ -290,16 +291,12 @@ const runHandoff = async (
   }
 
   await pauseIfRequested("after-destination", ctx);
-  await sendContinuation(
-    pi,
-    state,
-    intent.record,
-    destination,
-    destinationId,
-    async () => {
+  await sendContinuation(pi, state, intent.record, destination, destinationId, {
+    triggerTurn: true,
+    waitForIdle: async () => {
       await ctx.waitForIdle();
-    }
-  );
+    },
+  });
 };
 
 const resumeHandoff = async (

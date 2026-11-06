@@ -231,6 +231,11 @@ established_facts:
       fact: "print and rpc modes also wire navigateTree into the command context.",
       source: "PI/dist/modes/print-mode.js:62-70; PI/dist/modes/rpc/rpc-mode.js:240-248",
     }
+  F35:
+    {
+      fact: "At startup, when the restored branch has no messages, Pi treats the session as new and appends model_change and thinking_level_change before extensions run. A restart with the leaf on a destination under the anchor therefore leaves the leaf two settings entries below the destination. Found by demo D2 on 2026-11-06.",
+      source: "PI/dist/core/sdk.js:84-86, 292-303",
+    }
 
 assumptions:
   # Not verified. Each one names the step that confirms or refutes it.
@@ -427,7 +432,7 @@ lifecycle:
       }
     - {
         found: "destination, no continuation with matching details.handoffId",
-        leaf_after_restart: "destination",
+        leaf_after_restart: "destination, or model_change and thinking_level_change entries directly under it (F35)",
         action: "Send the continuation once.",
       }
     - {

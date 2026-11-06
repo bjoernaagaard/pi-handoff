@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { registerHandoff } from "./handoff.ts";
 import type { HandoffState } from "./handoff.ts";
+import { reconcile } from "./reconcile.ts";
 import { CUSTOM_TYPES, findAnchor } from "./records.ts";
 import type { AnchorRecord } from "./records.ts";
 
@@ -39,7 +40,7 @@ export default function piHandoff(pi: ExtensionAPI): void {
   registerHandoff(pi, state);
   registerCapture(pi);
 
-  pi.on("session_start", (event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     const isFreshStart = event.reason === "startup" || event.reason === "new";
 
     if (isFreshStart && !findAnchor(ctx.sessionManager.getEntries())) {
@@ -52,5 +53,6 @@ export default function piHandoff(pi: ExtensionAPI): void {
     }
 
     ctx.ui.notify("pi-handoff loaded", "info");
+    await reconcile(pi, state, ctx);
   });
 }
