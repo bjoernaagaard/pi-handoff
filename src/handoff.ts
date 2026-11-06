@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import type {
   AgentToolResult,
@@ -8,10 +9,17 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { CUSTOM_TYPES, collectHandoffs, findAnchor } from "./records.ts";
+import { continuationMessage } from "./continuation.ts";
+import {
+  CUSTOM_TYPES,
+  collectHandoffs,
+  findAnchor,
+  orderedDestinations,
+} from "./records.ts";
 import type {
   CancelReason,
   CancelRecord,
+  DestinationRecord,
   IntentRecord,
   ToolCallNote,
 } from "./records.ts";
@@ -30,7 +38,40 @@ type IntentResult =
 export interface HandoffState {
   /** Set by the handoff tool, consumed by agent_settled. */
   pendingHandoffId: string | undefined;
+  /** Set from navigation until the continuation is sent. Input typed meanwhile is held here. */
+  running: { handoffId: string; heldInput: string[] } | undefined;
 }
+
+/** The handoff that blocks a new one: recorded but not dispatched, or in progress. */
+const activeHandoffId = (state: HandoffState): string | undefined =>
+  state.pendingHandoffId ?? state.running?.handoffId;
+
+type PausePoint = "after-navigate" | "after-destination";
+
+// Longest delay setTimeout accepts. A pending timer also keeps print mode's process alive.
+const MAX_TIMER_MS = 2_147_483_647;
+
+/**
+ * Demonstration hook (HANDOFF.yaml A5). PI_HANDOFF_PAUSE_AT holds the handoff at one point so a
+ * demo can kill Pi there. PI_HANDOFF_PAUSE_MS ends the hold early; without it the hold lasts until
+ * Pi is killed.
+ */
+const pauseIfRequested = async (
+  point: PausePoint,
+  ctx: ExtensionCommandContext
+): Promise<void> => {
+  if (process.env.PI_HANDOFF_PAUSE_AT !== point) {
+    return;
+  }
+
+  const requested = Number(process.env.PI_HANDOFF_PAUSE_MS);
+
+  const delay =
+    Number.isFinite(requested) && requested >= 0 ? requested : MAX_TIMER_MS;
+
+  ctx.ui.notify(`pi-handoff: paused ${point}`, "warning");
+  await sleep(delay);
+};
 
 /**
  * Every tool call since the last user message on the branch, with its outcome so far.
@@ -136,15 +177,134 @@ const parseHandoffArgs = (args: string) => {
   return { constraints, task: firstLine.trim() };
 };
 
+/** Navigates to the anchor. Returns the cancel reason when the handoff cannot continue. */
+const navigateToAnchor = async (
+  anchorId: string,
+  ctx: ExtensionCommandContext
+): Promise<CancelReason | undefined> => {
+  try {
+    const result = await ctx.navigateTree(anchorId, { summarize: false });
+
+    if (result.cancelled) {
+      return "tree-cancelled";
+    }
+  } catch (error) {
+    ctx.ui.notify(
+      `pi-handoff: navigation failed: ${error instanceof Error ? error.message : String(error)}`,
+      "error"
+    );
+
+    return "navigate-threw";
+  }
+
+  if (ctx.sessionManager.getLeafId() !== anchorId) {
+    return "leaf-moved";
+  }
+
+  return undefined;
+};
+
+const replayHeldInput = (pi: ExtensionAPI, heldInput: readonly string[]) => {
+  for (const text of heldInput) {
+    pi.sendUserMessage(text, { deliverAs: "followUp" });
+  }
+};
+
+/**
+ * Lifecycle step 7, also used by restart recovery: send the continuation, then replay held input as
+ * follow-ups. Waits for the continuation turn when it can, so print and rpc runs do not exit first.
+ */
+export const sendContinuation = async (
+  pi: ExtensionAPI,
+  state: HandoffState,
+  intent: IntentRecord,
+  destination: DestinationRecord,
+  destinationId: string,
+  waitForIdle?: () => Promise<void>
+): Promise<void> => {
+  pi.sendMessage(continuationMessage(intent, destination, destinationId), {
+    triggerTurn: true,
+  });
+  const heldInput = state.running?.heldInput ?? [];
+  state.running = undefined;
+  replayHeldInput(pi, heldInput);
+  await waitForIdle?.();
+};
+
+/** Lifecycle steps 3 to 7: navigate to the anchor, write the destination, send the continuation. */
 const runHandoff = async (
+  pi: ExtensionAPI,
+  state: HandoffState,
   handoffId: string,
   ctx: ExtensionCommandContext
 ): Promise<void> => {
   await ctx.waitForIdle();
-  ctx.ui.notify(`pi-handoff: running handoff ${handoffId}`, "info");
+  const handoffs = collectHandoffs(ctx.sessionManager.getEntries());
+  const intent = handoffs.get(handoffId)?.intent;
+  const sourceLeafId = ctx.sessionManager.getLeafId();
+
+  if (!intent || sourceLeafId === null) {
+    ctx.ui.notify(`pi-handoff: no intent for handoff ${handoffId}.`, "error");
+
+    return;
+  }
+
+  const { anchorId } = intent.record;
+
+  const previousDestinationId =
+    orderedDestinations(handoffs).at(-1)?.entry.id ?? null;
+
+  state.running = { handoffId, heldInput: [] };
+  const cancelReason = await navigateToAnchor(anchorId, ctx);
+
+  if (cancelReason !== undefined) {
+    const { heldInput } = state.running;
+    state.running = undefined;
+    appendCancel(pi, handoffId, cancelReason);
+    ctx.ui.notify(
+      `pi-handoff: handoff ${handoffId} cancelled (${cancelReason}).`,
+      "warning"
+    );
+    replayHeldInput(pi, heldInput);
+
+    return;
+  }
+
+  await pauseIfRequested("after-navigate", ctx);
+
+  const destination: DestinationRecord = {
+    handoffId,
+    intentEntryId: intent.entry.id,
+    previousDestinationId,
+    sourceLeafId,
+    sourceSessionFile: intent.record.sourceSessionFile,
+    sourceSessionId: intent.record.sourceSessionId,
+    version: 1,
+  };
+
+  pi.appendEntry(CUSTOM_TYPES.destination, destination);
+  const destinationId = ctx.sessionManager.getLeafId();
+
+  if (destinationId === null) {
+    throw new Error("pi-handoff: the destination entry was not appended");
+  }
+
+  await pauseIfRequested("after-destination", ctx);
+  await sendContinuation(
+    pi,
+    state,
+    intent.record,
+    destination,
+    destinationId,
+    async () => {
+      await ctx.waitForIdle();
+    }
+  );
 };
 
 const resumeHandoff = async (
+  pi: ExtensionAPI,
+  state: HandoffState,
   handoffId: string,
   ctx: ExtensionCommandContext
 ): Promise<void> => {
@@ -169,7 +329,7 @@ const resumeHandoff = async (
     return;
   }
 
-  await runHandoff(handoffId, ctx);
+  await runHandoff(pi, state, handoffId, ctx);
 };
 
 const textResult = (
@@ -188,11 +348,12 @@ const recordToolHandoff = (
   toolCallId: string,
   params: { task: string; constraints: string[] }
 ): AgentToolResult<undefined> => {
-  if (state.pendingHandoffId !== undefined) {
-    return textResult(
-      `A handoff (${state.pendingHandoffId}) is already pending.`,
-      { isError: true }
-    );
+  const active = activeHandoffId(state);
+
+  if (active !== undefined) {
+    return textResult(`A handoff (${active}) is already in progress.`, {
+      isError: true,
+    });
   }
 
   const result = writeIntent(
@@ -247,7 +408,7 @@ export const registerHandoff = (
       const resumeId = resume?.groups?.handoffId;
 
       if (resumeId !== undefined) {
-        await resumeHandoff(resumeId, ctx);
+        await resumeHandoff(pi, state, resumeId, ctx);
 
         return;
       }
@@ -265,9 +426,11 @@ export const registerHandoff = (
 
       await ctx.waitForIdle();
 
-      if (state.pendingHandoffId !== undefined) {
+      const active = activeHandoffId(state);
+
+      if (active !== undefined) {
         ctx.ui.notify(
-          `pi-handoff: handoff ${state.pendingHandoffId} is already pending.`,
+          `pi-handoff: handoff ${active} is already in progress.`,
           "error"
         );
 
@@ -282,14 +445,14 @@ export const registerHandoff = (
         return;
       }
 
-      await runHandoff(result.handoffId, ctx);
+      await runHandoff(pi, state, result.handoffId, ctx);
     },
   });
 
   pi.registerCommand(RUN_COMMAND, {
     description: "Internal: continue a recorded handoff. Pi runs this itself.",
     handler: async (args, ctx) => {
-      await runHandoff(args.trim(), ctx);
+      await runHandoff(pi, state, args.trim(), ctx);
     },
   });
 

@@ -246,6 +246,43 @@ export const collectHandoffs = (
   return handoffs;
 };
 
+/**
+ * Finalized destinations, oldest first, linked by previousDestinationId (never by timestamps, F18).
+ * The newest is the one no other destination names as previous.
+ */
+export const orderedDestinations = (
+  handoffs: ReadonlyMap<string, HandoffRecords>
+): Recorded<DestinationRecord>[] => {
+  const destinations = [...handoffs.values()].flatMap((handoff) =>
+    handoff.destination ? [handoff.destination] : []
+  );
+
+  const byId = new Map(
+    destinations.map((destination) => [destination.entry.id, destination])
+  );
+
+  const referenced = new Set(
+    destinations.map((destination) => destination.record.previousDestinationId)
+  );
+
+  const newest = destinations.findLast(
+    (destination) => !referenced.has(destination.entry.id)
+  );
+
+  const chain: Recorded<DestinationRecord>[] = [];
+  const seen = new Set<string>();
+  let current = newest;
+
+  while (current && !seen.has(current.entry.id)) {
+    seen.add(current.entry.id);
+    chain.unshift(current);
+    const previousId = current.record.previousDestinationId;
+    current = previousId === null ? undefined : byId.get(previousId);
+  }
+
+  return chain;
+};
+
 /** The session's one anchor: the first valid anchor entry in file order. */
 export const findAnchor = (
   entries: readonly SessionEntry[]
