@@ -1,0 +1,608 @@
+handoff:
+  version: 1
+  written: "2026-11-06"
+  for: "An agent implementing the pi-handoff Pi extension. Everything needed is in this file and the paths it names."
+
+goal: >-
+  Build a Pi extension that keeps related work in one Pi session file. Each model request carries only a small fixed prefix (root up to an anchor entry) plus the current branch. A handoff archives the current work by moving the session leaf back to the anchor, writes a destination record and a continuation message under the anchor, and resumes work. Archived work stays searchable from the current branch without moving back onto it.
+
+session_shape: |
+  root ... anchor (plain custom entry, near the start of the session)
+           ├── archived work A
+           ├── archived work B
+           └── active continuation C   <- current leaf
+
+repository:
+  path: ~/src/pi-handoff
+  branch: main
+  remote: none
+  commits:
+    - a2f6989 Scaffold pi-handoff with Ultracite and save implementation handoff
+    - e717fcb Add pi-schema and use it for handoff record validation
+    - (the commit that adds this file and removes HANDOFF.md)
+  package_manager: bun
+  tooling:
+    ultracite: "8.1.1 (npm latest on 2026-11-06)"
+    linter: "oxlint 1.90 with ultracite core + anti-slop presets, type-aware via oxlint-tsgolint"
+    formatter: oxfmt 0.75
+    git_hook: "lefthook pre-commit runs `bunx ultracite fix {staged_files}` and restages"
+  dependencies:
+    "@earendil-works/pi-schema": "1.5.0 (exact)"
+  peer_dependencies:
+    "@earendil-works/pi-coding-agent": "*"
+    typebox: "*"
+  installed_locally_by_bun_for_types:
+    "@earendil-works/pi-coding-agent": "1.5.0"
+    typebox: "1.4.5 (Pi itself bundles typebox 1.3.27; runtime uses Pi's copy)"
+  pi_manifest: 'package.json "pi.extensions": ["./src/extension.ts"]'
+
+current_state:
+  - "No extension source exists. src/extension.ts, which package.json names, does not exist yet."
+  - "`bun run check` exits 0 and `bunx ultracite doctor` reports 8 passed, 0 failed."
+  - "No demonstration has run. Every Pi behavior below comes from reading the installed Pi 1.5.0 source."
+
+source_roots:
+  PI: ~/.local/share/mise/installs/npm-earendil-works-pi-coding-agent/1.5.0/node_modules/.mise/@earendil-works+pi-coding-agent@1.5.0_@aws-sdk+credential-provider-node@3.972.92_@smithy+signature-v4@5.7.5_ws@8.22.1/node_modules/@earendil-works/pi-coding-agent
+  CORE: ~/.local/share/mise/installs/npm-earendil-works-pi-coding-agent/1.5.0/node_modules/.mise/@earendil-works+pi-agent-core@1.5.0_@aws-sdk+credential-provider-node@3.972.92_@smithy+_3e4ed0485c6b1b0eb1b540cbede744a7/node_modules/@earendil-works/pi-agent-core
+  note: "Line numbers are for Pi 1.5.0. `pi --version` printed 1.5.0 on 2026-11-06. Recheck every citation after a Pi upgrade."
+
+completed_work:
+  - what: "Read-only investigation of Pi 1.5.0 tree navigation, session persistence, extension lifecycle and compaction."
+    evidence: "Citations in established_facts. The investigation transcript is ~/.pi/agent/sessions/--home-bsa-.t3-scratch-2026-11-06-scope-read-only-investigation-existing-68b131bc--/2026-11-06T11-25-21-163Z_01a1b09b-298a-70de-bcae-8442e3306884.jsonl"
+  - what: "Project scaffold with Ultracite (oxlint, anti-slop, lefthook, type-aware), git init."
+    evidence: "~/src/pi-handoff at commit a2f6989. Rerun `bunx ultracite doctor` to confirm."
+  - what: "Added @earendil-works/pi-schema 1.5.0 and checked it with a throwaway probe."
+    evidence: "Probe source /tmp/pi-schema-probe.ts (may be gone after reboot). Its recorded output is in established_facts F30."
+  - what: "Drafted the continuation message template."
+    evidence: "contracts.continuation_template in this file. The user has not approved the wording yet."
+
+established_facts:
+  # Each fact was read in source on 2026-11-06. "PI/" and "CORE/" refer to source_roots.
+  F1:
+    {
+      fact: "agent_settled fires after retries, compaction and queued continuations finish. isStreaming is already false then.",
+      source: "PI/dist/core/agent-session.js:696-718, 1081-1083",
+    }
+  F2:
+    {
+      fact: "prompt() and sendCustomMessage(triggerTurn) called while agent_settled handlers run are deferred until every settled handler returns.",
+      source: "PI/dist/core/agent-session.js:1650-1651, 1883-1888, 708-716",
+    }
+  F3:
+    {
+      fact: 'pi.sendUserMessage("/cmd args", { expandPromptTemplates: true }) runs a registered extension command with an ExtensionCommandContext. Pi docs show this pattern for running a command from agent_settled.',
+      source: "PI/dist/core/agent-session.js:1654-1660, 1716-1726; PI/docs/extensions.md:1536-1561",
+    }
+  F4:
+    {
+      fact: "ctx.navigateTree and ctx.waitForIdle exist only on the command context, not on event or tool contexts.",
+      source: "PI/dist/core/extensions/types.d.ts:305-341; PI/dist/core/extensions/runner.js:724-760",
+    }
+  F5:
+    {
+      fact: "navigateTree throws while a run or a compaction or another navigation is active. It returns { cancelled: false } and does nothing if the target is already the leaf.",
+      source: "PI/dist/core/agent-session.js:3280-3290; PI/docs/extensions.md:1407-1410",
+    }
+  F6:
+    {
+      fact: "Navigating to a plain custom entry makes that entry the leaf. Navigating to a user message or custom_message makes its parent the leaf.",
+      source: "PI/dist/core/agent-session.js:3385-3396",
+    }
+  F7:
+    {
+      fact: "navigateTree with summarize:false and no label writes nothing to the session file. Only leafId changes in memory. A label option appends a label entry.",
+      source: "PI/dist/core/agent-session.js:3401-3420; PI/dist/core/session-manager.js:1173-1178",
+    }
+  F8:
+    {
+      fact: "After navigation Pi rebuilds model messages, restores tools from the transcript and emits session_tree { newLeafId, oldLeafId }. The extension instance is the same object.",
+      source: "PI/dist/core/agent-session.js:3422-3431",
+    }
+  F9:
+    {
+      fact: "session_before_tree can return { cancel: true } and receives preparation.oldLeafId.",
+      source: "PI/dist/core/agent-session.js:3301-3329; PI/dist/core/extensions/types.d.ts:663-690",
+    }
+  F10:
+    {
+      fact: "When Pi loads a session file, the leaf is the last entry in file order.",
+      source: "PI/dist/core/session-manager.js:733-742",
+    }
+  F11:
+    {
+      fact: "Every appended entry gets the current leaf as parentId and becomes the new leaf.",
+      source: "PI/dist/core/session-manager.js:816-830, 913-923",
+    }
+  F12:
+    {
+      fact: "Plain custom entries never reach the model. custom_message entries do.",
+      source: "PI/dist/core/session-manager.js:162-191",
+    }
+  F13:
+    {
+      fact: "pi.appendEntry writes immediately, even during a run. Custom messages sent during a run without triggerTurn wait until the turn ends.",
+      source: "PI/dist/core/agent-session.js:2801-2807, 1890-1896",
+    }
+  F14:
+    {
+      fact: "A triggerTurn custom message is written to the session at message_end before the first provider request. The compaction check and before_agent_start run before that write.",
+      source: "PI/dist/core/agent-session.js:1497-1504, 770-775; CORE/dist/agent-loop.js:55-61",
+    }
+  F15:
+    {
+      fact: "Pi diffs the system prompt against system messages on the current branch and records a new system message on the next run when they differ. An anchor placed before any system message still gets a full system prompt after navigation.",
+      source: "PI/dist/core/agent-session.js:1341-1346, 1543-1546",
+    }
+  F16:
+    {
+      fact: "Extension ctx.sessionManager exposes getEntries, getEntry, getBranch(fromId), getTree, getLeafId, getLeafEntry, getHeader, getSessionFile, getSessionId, buildSessionProjection. It does not expose getChildren or branch().",
+      source: "PI/dist/core/session-manager.d.ts:178",
+    }
+  F17:
+    {
+      fact: "getEntries() returns every entry on every branch, including entries hidden from the model by compaction. getBranch(fromId) follows raw parentId links.",
+      source: "PI/dist/core/session-manager.js:1074-1084, 1119-1121",
+    }
+  F18:
+    {
+      fact: "getTree() orders siblings by timestamp only.",
+      source: "PI/dist/core/session-manager.js:1159",
+    }
+  F19:
+    {
+      fact: "Compaction keeps a summary plus a recent tail of the active path. The summary covers everything before the tail, including entries before the anchor.",
+      source: "PI/dist/core/session-manager.js:201-229; PI/dist/core/compaction/compaction.js:609-636",
+    }
+  F20:
+    {
+      fact: "compaction.enabled defaults to true. Setting it false disables threshold and overflow compaction.",
+      source: "PI/dist/core/agent-session.js:2409-2412; PI/docs/settings.md:73-75",
+    }
+  F21:
+    {
+      fact: "session_before_compact can return { cancel: true } and carries reason manual|threshold|overflow and willRetry.",
+      source: "PI/dist/core/extensions/types.d.ts:620-630; PI/docs/extensions.md:532-546",
+    }
+  F22:
+    {
+      fact: "In the TUI, text submitted while navigateTree runs (isCompacting is true) is queued and sent right after navigateTree returns, before the command handler continues.",
+      source: "PI/dist/core/agent-session.js:1242-1246; PI/dist/modes/interactive/interactive-mode.js:2758-2766, 1593-1609, 3996-4046",
+    }
+  F23:
+    {
+      fact: "The session file is written with openSync/appendFileSync and no fsync.",
+      source: "PI/dist/core/session-manager.js:801, 813",
+    }
+  F24:
+    {
+      fact: "A new session file is not written until it holds a user or assistant message. Then the whole in-memory buffer is written.",
+      source: "PI/dist/core/session-manager.js:792-815",
+    }
+  F25:
+    {
+      fact: "navigateTree only changes session state. It does not undo file edits or outside actions.",
+      source: "PI/dist/core/agent-session.js:3279-3433",
+    }
+  F26:
+    {
+      fact: "Pi validates tool arguments with @earendil-works/pi-schema, whatever built the schema.",
+      source: "PI/docs/extensions.md:174-182; PI/CHANGELOG.md:14",
+    }
+  F27:
+    {
+      fact: "Pi maps only pi-ai, pi-agent-core, pi-coding-agent, pi-tui and typebox for extensions. pi-schema is not mapped and must be a real dependency.",
+      source: "PI/dist/core/extensions/virtual-modules.js:15-40; PI/docs/packages.md (Declare dependencies)",
+    }
+  F28:
+    {
+      fact: "registerTool types parameters as TypeBox TSchema.",
+      source: "PI/dist/core/extensions/types.d.ts:472-484, 1252",
+    }
+  F29:
+    {
+      fact: "Session files are parsed without validation, so entries can be old, forked or hand-edited.",
+      source: "PI/dist/core/session-manager.js:169-170",
+    }
+  F30:
+    fact: "pi-schema 1.5.0 obj() is closed, reports errors as JSON Pointer paths, and a union of lit() values reports only the first literal on failure."
+    source: "Probe run with bun on 2026-11-06"
+    recorded_output: |
+      true
+      [{"path":"/sourceLeafId","keyword":"required","message":"missing"},{"path":"/previousDestinationId","keyword":"required","message":"missing"},{"path":"/version","keyword":"const","message":"expected 1"},{"path":"/handoffId","keyword":"minLength","message":"expected at least 1 characters"},{"path":"/extra","keyword":"additionalProperties","message":"unknown field"}]
+      [{"path":"/reason","keyword":"const","message":"expected \"aborted-run\""}]
+  F31:
+    {
+      fact: "A tool result may set terminate: true. Pi docs use it for a tool that hands work to agent_settled.",
+      source: "PI/dist/core/extensions/types.d.ts:1116; PI/docs/extensions.md:1540-1553",
+    }
+  F32:
+    {
+      fact: "Branch-dependent extension state should be rebuilt from getBranch() on session_start and session_tree.",
+      source: "PI/docs/extensions.md:2133-2160",
+    }
+  F33:
+    {
+      fact: "pi CLI supports -e/--extension <path>, --session <path|id>, --session-dir <dir>, --no-session, -p/--print, --mode json|rpc. PI_CODING_AGENT_DIR overrides ~/.pi/agent.",
+      source: "PI/docs/cli.md:45-48, 86-104, 194; PI/docs/environment-variables.md:81",
+    }
+  F34:
+    {
+      fact: "print and rpc modes also wire navigateTree into the command context.",
+      source: "PI/dist/modes/print-mode.js:62-70; PI/dist/modes/rpc/rpc-mode.js:240-248",
+    }
+
+assumptions:
+  # Not verified. Each one names the step that confirms or refutes it.
+  A1:
+    {
+      assumption: "A command dispatched from agent_settled via sendUserMessage(expandPromptTemplates) can call navigateTree successfully in TUI, print and rpc modes.",
+      verify_in: "step 6 demo D2/D3",
+    }
+  A2:
+    {
+      assumption: "An input handler that returns { action: 'handled' } sees TUI text queued during navigateTree, so the extension can hold it.",
+      verify_in: "demo D5",
+    }
+  A3:
+    {
+      assumption: "Cancelling threshold compaction in session_before_compact does not leave the run stuck or loop.",
+      verify_in: "demo D6",
+    }
+  A4:
+    {
+      assumption: "pi -e ./src/extension.ts loads TypeScript directly (Pi uses jiti).",
+      verify_in: "step 1",
+    }
+  A5:
+    {
+      assumption: "A kill between steps can be forced reliably by an env-gated wait inside the command (PI_HANDOFF_PAUSE_AT=after-navigate|after-destination).",
+      verify_in: "demos D1/D2",
+    }
+  A6:
+    {
+      assumption: "Plain substring matching is good enough for handoff_search in the first version.",
+      verify_in: "demo D7 and human decision H3",
+    }
+
+guarantees_not_made:
+  - "The handoff is not atomic. It is several separate file appends (F7, F11, F23)."
+  - "Pi does not detect duplicate handoffs. Only the extension's reconciler does."
+  - "Effects are not exactly-once. Tool effects from archived work stay in place (F25)."
+  - "Recall is not complete. Search returns bounded excerpts."
+  - "Data can be lost on power failure, because Pi does not fsync (F23)."
+
+scope:
+  in:
+    - "src/extension.ts, src/records.ts, src/reconcile.ts, src/handoff.ts, src/search.ts, src/continuation.ts"
+    - "A /handoff command, an internal /pi-handoff:run command, a handoff tool for the model, and a handoff_search tool."
+    - "Anchor creation, handoff lifecycle, restart reconciliation, cancellation, queued input, compaction policy, retrieval."
+    - "Running demonstrations D1 to D7 against the real pi binary and saving their artifacts."
+  out:
+    - "Unit tests, integration tests, mocks, or any test framework. The user bans them. Prove behavior by running real pi."
+    - "Upstream changes to Pi. Work only through the public extension API."
+    - "Publishing to npm, pushing to a remote, or installing the extension into ~/.pi/agent/settings.json."
+    - "New documentation files. Update HANDOFF.yaml only when facts change."
+    - "Helper scripts or CLIs for chores."
+  protected_files:
+    - "oxlint.config.ts, oxfmt.config.ts, lefthook.yml: keep the anti-slop preset, type-aware mode and the pre-commit hook."
+    - "AGENTS.md and .vscode/settings.json: generated by Ultracite. Do not edit."
+    - "package.json devDependencies and the ultracite version: do not change."
+    - "bun.lock: change only through bun add/remove."
+    - "Everything under source_roots and ~/.pi/agent: read only."
+    - "The user's real session files under ~/.pi/agent/sessions: never open them with the extension loaded."
+
+contracts:
+  custom_types:
+    anchor: pi-handoff/anchor
+    intent: pi-handoff/intent
+    destination: pi-handoff/destination
+    cancelled: pi-handoff/cancelled
+    compaction_allowed: pi-handoff/compaction-allowed
+    continuation_message: pi-handoff/continuation
+  records_ts: |
+    import { arr, compile, lit, nullable, obj, oneOf, type Static, str } from "@earendil-works/pi-schema";
+
+    const Id = str({ minLength: 1 });
+
+    export const AnchorRecord = obj({ version: lit(1), createdAt: str({ format: "date-time" }) });
+
+    const ToolCallNote = obj({
+      toolCallId: Id,
+      toolName: Id,
+      status: oneOf(["completed", "error", "no-result"]),
+    });
+
+    // Written on the source branch by the handoff tool or /handoff.
+    export const IntentRecord = obj({
+      version: lit(1),
+      handoffId: Id,
+      anchorId: Id,
+      sourceSessionFile: Id,
+      sourceSessionId: Id,
+      task: Id,
+      constraints: arr(str()),
+      openToolCalls: arr(ToolCallNote),
+    });
+
+    // parentId must equal anchorId.
+    export const DestinationRecord = obj({
+      version: lit(1),
+      handoffId: Id,
+      intentEntryId: Id,
+      sourceLeafId: Id,
+      previousDestinationId: nullable(Id),
+      sourceSessionFile: Id,
+      sourceSessionId: Id,
+    });
+
+    export const ContinuationDetails = obj({ handoffId: Id, destinationId: Id });
+
+    export const CancelRecord = obj({
+      version: lit(1),
+      handoffId: Id,
+      reason: oneOf(["aborted-run", "tree-cancelled", "navigate-threw", "leaf-moved", "user"]),
+    });
+
+    export const CompactionAllowedRecord = obj({ version: lit(1), reason: oneOf(["overflow", "manual"]) });
+
+    export type IntentRecord = Static<typeof IntentRecord>;
+    export const intentRecord = compile(IntentRecord);
+    // Same pattern for every record: compile once at module load, check(entry.data) before use,
+    // log errors(entry.data) and treat the record as missing when check fails (F29).
+  record_rules:
+    - "Use oneOf for string enums, never union of lit (F30)."
+    - "All records are plain custom entries via pi.appendEntry (F12, F13). Only the continuation is a custom_message."
+    - "Order of continuations comes from previousDestinationId and sourceLeafId, never sibling timestamps (F18)."
+    - "Exactly one anchor per session."
+  handoff_tool:
+    name: handoff
+    parameters_typebox: "Type.Object({ task: Type.String({ minLength: 1 }), constraints: Type.Array(Type.String()) })"
+    effect: "Writes IntentRecord on the current branch, returns text naming the handoffId, sets terminate: true (F31)."
+  commands:
+    - "/handoff <task>: user-facing. Writes the same IntentRecord with constraints: [] unless the user passes them, then runs the lifecycle when idle."
+    - "/handoff resume <handoffId>: user-facing. Continues a stale intent after a crash."
+    - "/pi-handoff:run <handoffId>: internal. Dispatched from agent_settled. Runs lifecycle steps 3 to 7."
+  handoff_search_tool:
+    name: handoff_search
+    parameters_typebox: "Type.Object({ query: Type.String({ minLength: 1 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) })"
+    defaults: { limit: 8, max_chars_per_hit: 1200 }
+    output_per_hit: "{ sessionFile, sessionId, entryId, timestamp, status: current|archived|abandoned|orphaned, hiddenByCompaction: boolean, handoffId|null, excerpt }"
+    algorithm: |
+      destinations = valid DestinationRecords, ordered by previousDestinationId
+      current = set of ids in getBranch()
+      for entry in getEntries():                         # all branches, raw (F17)
+        text = text of user, assistant, toolResult and custom_message entries
+        skip unless text matches query (case-insensitive substring)
+        owner = first destination whose getBranch(sourceLeafId) contains entry
+        status = current   if entry in current
+                 archived  if owner and entry in getBranch(owner.sourceLeafId)
+                 abandoned if under the anchor but off every finalized path
+                 orphaned  if under the anchor before any destination
+        hiddenByCompaction = entry in current and before the latest compaction's firstKeptEntryId
+      return newest `limit` hits, excerpt cut to max_chars_per_hit
+  continuation_template:
+    status: "DRAFT. Needs user approval (H1). The model reads this text after every handoff."
+    customType: pi-handoff/continuation
+    display: true
+    details: ContinuationDetails
+    content: |
+      You are continuing work from an earlier part of this session. That earlier work is archived, not deleted. You cannot see it here, but you can search it with the handoff_search tool.
+
+      Task
+      {task}
+
+      Constraints that still apply. They are quoted exactly. Follow every one.
+      {constraints as "- " lines, or "- None recorded."}
+
+      Where this came from
+      - Session file: {sourceSessionFile}
+      - Session ID: {sourceSessionId}
+      - Last entry of the archived work: {sourceLeafId}
+      - Handoff ID: {handoffId}
+      {only when openToolCalls is not empty:}
+      Tool calls from the archived work that may not have finished
+      {"- {toolName} ({toolCallId}): {status}" lines}
+      Check the real state of each one before you run it again.
+
+      Files and outside changes made by the archived work are still in place. Before you rely on an earlier decision, find it with handoff_search and cite its entry ID. Results marked "abandoned" are alternatives that were dropped, not decisions.
+
+lifecycle:
+  states: "idle -> intent-written -> navigating -> destination-written -> continuing -> idle; any state before destination-written may go to cancelled"
+  steps:
+    - "1. The model calls handoff, or the user runs /handoff. An IntentRecord is appended on the source branch."
+    - "2. agent_settled handler: if a pending intent exists and event.aborted is true, append CancelRecord(aborted-run) and stop. Otherwise pi.sendUserMessage('/pi-handoff:run <id>', { expandPromptTemplates: true }) (F2, F3)."
+    - "3. Command: await ctx.waitForIdle(). sourceLeafId = ctx.sessionManager.getLeafId()."
+    - "4. Set an in-memory 'handoff running' flag, then ctx.navigateTree(anchorId, { summarize: false }) with no label (F5-F7)."
+    - "5. On cancelled or throw: clear the flag, append CancelRecord(tree-cancelled|navigate-threw) on the source branch, stop."
+    - "6. If getLeafId() !== anchorId: append CancelRecord(leaf-moved) and stop without repair. Report it."
+    - "7. pi.appendEntry(DestinationRecord) under the anchor. Then pi.sendMessage(continuation, { triggerTurn: true }) (F14). Clear the flag. Replay held input as follow-ups."
+    - "8. On session_start and session_tree, rebuild branch-dependent state from getBranch() (F8, F32)."
+  anchor_placement: "On session_start with reason startup or new, append an AnchorRecord if none exists. Pi writes it with the first user message (F24). Before any system message is fine (F15)."
+  recovery_on_session_start:
+    - {
+        found: "intent only",
+        leaf_after_restart: "source tip (F7, F10)",
+        action: "Mark stale. Notify the user. Do nothing until /handoff resume <id>.",
+      }
+    - {
+        found: "destination, no continuation with matching details.handoffId",
+        leaf_after_restart: "destination",
+        action: "Send the continuation once.",
+      }
+    - {
+        found: "destination and continuation",
+        leaf_after_restart: "continuation or later",
+        action: "Nothing.",
+      }
+    - {
+        found: "cancel record",
+        leaf_after_restart: "source branch",
+        action: "Nothing.",
+      }
+    - {
+        found: "non-handoff entries under the anchor before the destination",
+        leaf_after_restart: "under the anchor",
+        action: "Report. No automatic repair. Search marks them orphaned.",
+      }
+  idempotence_rule: "Derive the state from records by handoffId each time. Running the reconciler twice must append nothing the second time."
+  queued_input: "While the flag is set, an input handler returns { action: 'handled' } and keeps the text. Replay it with pi.sendUserMessage(text, { deliverAs: 'followUp' }) after step 7 (A2)."
+  uncertain_tool_effects: "The intent lists every tool call since the last user message on the source branch with status completed, error or no-result. The continuation names unfinished ones."
+  compaction_policy:
+    - "session_before_compact with reason threshold: return { cancel: true } and notify the user to run /handoff (A3)."
+    - "reason overflow: allow it, because cancelling would stall the turn. Append a CompactionAllowedRecord."
+    - "reason manual: allow it and append a CompactionAllowedRecord."
+
+execution_constraints:
+  - "Run every command from ~/src/pi-handoff."
+  - "Use bun. Add packages only with `bun add`. Ask the user before adding any package other than those listed in repository."
+  - "Never add test files, test frameworks or mocks."
+  - "Run demos with an isolated agent dir and session dir: PI_CODING_AGENT_DIR=$PWD/.demo/agent, --session-dir $PWD/.demo/sessions. Keep .demo/ out of git."
+  - "Load the extension only with `pi -e ./src/extension.ts`. Do not run `pi install`."
+  - "Commit after each step that passes its check. Let lefthook run. Never pass --no-verify."
+  - "Keep comments only for a non-obvious why."
+
+commands:
+  lint_and_format_check: bun run check
+  autofix: bun run fix
+  doctor: bunx ultracite doctor
+  typecheck: "bunx tsc --noEmit -p . (typescript is not installed; ask before adding it, or rely on oxlint type-aware via `bun run check`)"
+  load_smoke: 'PI_CODING_AGENT_DIR=$PWD/.demo/agent pi -e ./src/extension.ts --session-dir $PWD/.demo/sessions -p "say ok"'
+  inspect_session: "jq -c '{type, id, parentId, customType}' .demo/sessions/*.jsonl"
+  provider_capture: "A before_provider_request handler, enabled only when PI_HANDOFF_CAPTURE=<dir>, writes each payload to <dir>/<n>.json."
+
+steps:
+  - id: 1
+    name: Load the extension
+    actions:
+      - "Add .demo/ to .gitignore."
+      - "Create src/extension.ts that registers nothing but a session_start handler which calls ctx.ui.notify('pi-handoff loaded')."
+    done_when:
+      - "load_smoke exits 0 and prints model output."
+      - "bun run check exits 0."
+  - id: 2
+    name: Records
+    actions:
+      - "Create src/records.ts from contracts.records_ts with compiled validators for every record."
+    done_when:
+      - "bun run check exits 0."
+      - "A bun one-off run (not committed) shows check() true for a valid DestinationRecord and the expected errors() for a bad one, matching F30."
+  - id: 3
+    name: Anchor
+    actions:
+      - "On session_start (startup|new) append AnchorRecord when none exists."
+    done_when:
+      - "After load_smoke, the first custom entry in the new session JSONL has customType pi-handoff/anchor and appears before the first assistant message."
+      - "A second run with --session <same file> adds no second anchor."
+  - id: 4
+    name: Intent, command and tool
+    actions:
+      - "Create src/handoff.ts with the handoff tool, /handoff, /handoff resume and the agent_settled dispatch (lifecycle steps 1 and 2)."
+    done_when:
+      - "Asking the model to call handoff produces one pi-handoff/intent entry on the source branch, and agent_settled dispatches /pi-handoff:run."
+  - id: 5
+    name: Navigation, destination and continuation
+    actions:
+      - "Implement lifecycle steps 3 to 7 and src/continuation.ts from contracts.continuation_template."
+      - "Implement PI_HANDOFF_PAUSE_AT for D1 and D2 (A5)."
+    done_when:
+      - "Demo D3 passes."
+  - id: 6
+    name: Recovery
+    actions:
+      - "Create src/reconcile.ts implementing recovery_on_session_start and idempotence_rule."
+    done_when:
+      - "Demos D1 and D2 pass."
+  - id: 7
+    name: Queued input and cancellation
+    actions:
+      - "Add the input handler and CancelRecord paths."
+    done_when:
+      - "Demos D4 and D5 pass."
+  - id: 8
+    name: Compaction policy
+    actions:
+      - "Add the session_before_compact handler."
+    done_when:
+      - "Demo D6 passes."
+  - id: 9
+    name: Retrieval
+    actions:
+      - "Create src/search.ts with handoff_search per contracts."
+    done_when:
+      - "Demo D7 passes."
+
+required_verification:
+  artifacts_dir: ".demo/artifacts/<demo-id>/ containing the session JSONL, provider captures and a pass.txt with the commands run and their output"
+  demos:
+    D1:
+      {
+        setup: "Start a handoff with PI_HANDOFF_PAUSE_AT=after-navigate, kill pi while it waits, restart with --session <file>.",
+        pass: "JSONL line count is unchanged by navigation. Leaf after restart is the source tip. The reconciler reports a stale intent and sends nothing.",
+      }
+    D2:
+      {
+        setup: "PI_HANDOFF_PAUSE_AT=after-destination, kill, restart twice.",
+        pass: "The last line before restart is the destination with parentId == anchor id. The first restart appends exactly one continuation. The second restart appends nothing.",
+      }
+    D3:
+      {
+        setup: "Complete a handoff with PI_HANDOFF_CAPTURE set, then send one message.",
+        pass: "The captured payload has the system prompt, the prefix up to the anchor, the continuation and the new message, and no text unique to the archived work.",
+      }
+    D4:
+      {
+        setup: "In archived work, have a tool write .demo/effect.txt. Hand off.",
+        pass: "The file still exists with the same content. The continuation lists any unfinished tool calls.",
+      }
+    D5:
+      {
+        setup: "In the TUI, type a message while PI_HANDOFF_PAUSE_AT holds the handoff.",
+        pass: "The typed message appears in the JSONL after the continuation, never directly under the anchor.",
+      }
+    D6:
+      {
+        setup: "Set compaction.reserveTokens high in .demo/agent/settings.json so the threshold trips quickly.",
+        pass: "No compaction entry appears for a threshold trigger, and the user is told to hand off.",
+      }
+    D7:
+      {
+        setup: "Create archived work A, an abandoned alternative under it, then hand off twice. Search for text from each.",
+        pass: "Each hit has the right status and carries sessionFile, sessionId and entryId.",
+      }
+
+blockers: []
+
+human_decisions:
+  H1:
+    {
+      question: "Approve or edit contracts.continuation_template.content.",
+      default_if_unanswered: "Use the draft as written, and say in the report that the wording is not approved.",
+      blocks: "nothing",
+    }
+  H2:
+    {
+      question: "Cancel threshold compaction (current plan) or tell users to set compaction.enabled false, which also disables overflow recovery.",
+      default_if_unanswered: "Cancel threshold compaction only.",
+      blocks: "nothing",
+    }
+  H3:
+    {
+      question: "Plain substring search, or a ranking library (needs approval to add a package).",
+      default_if_unanswered: "Plain substring search.",
+      blocks: "nothing",
+    }
+  H4:
+    {
+      question: "Who starts a handoff: the model tool, the user command, or both.",
+      default_if_unanswered: "Both.",
+      blocks: "nothing",
+    }
+
+report_back:
+  - "Commit hashes per step, with `git log --oneline`."
+  - "For each step, its done_when results with the command output."
+  - "For each demo D1 to D7: pass, fail, or could not run, with the artifacts path. Could not run is not a pass."
+  - "Each assumption A1 to A6: confirmed or refuted, with evidence."
+  - "Any established fact the code contradicted, with the source line you read."
+  - "Defaults you applied for H1 to H4."
+  - "Final `bun run check` and `git status --porcelain` output."
