@@ -30,35 +30,40 @@ type SessionView = ExtensionContext["sessionManager"];
 
 const CONSTRAINT_PREFIX = "- ";
 
+const STALE_ACTION = /^(?<verb>resume|cancel)\s+(?<handoffId>\S+)$/u;
+
 type IntentResult =
   | { ok: true; handoffId: string }
   | { ok: false; reason: string };
+
+type HeldInput = Parameters<ExtensionAPI["sendUserMessage"]>[0];
 
 /** In-memory handoff state. Only the session file is durable; this resets on restart. */
 export interface HandoffState {
   /** Set by the handoff tool, consumed by agent_settled. */
   pendingHandoffId: string | undefined;
   /** Set from navigation until the continuation is sent. Input typed meanwhile is held here. */
-  running: { handoffId: string; heldInput: string[] } | undefined;
+  running: { handoffId: string; heldInput: HeldInput[] } | undefined;
 }
 
 /** The handoff that blocks a new one: recorded but not dispatched, or in progress. */
 const activeHandoffId = (state: HandoffState): string | undefined =>
   state.pendingHandoffId ?? state.running?.handoffId;
 
-type PausePoint = "after-navigate" | "after-destination";
+type PausePoint = "during-navigate" | "after-navigate" | "after-destination";
 
 // Longest delay setTimeout accepts. A pending timer also keeps print mode's process alive.
 const MAX_TIMER_MS = 2_147_483_647;
 
 /**
  * Demonstration hook (HANDOFF.yaml A5). PI_HANDOFF_PAUSE_AT holds the handoff at one point so a
- * demo can kill Pi there. PI_HANDOFF_PAUSE_MS ends the hold early; without it the hold lasts until
+ * demo can kill Pi there or type into the TUI. during-navigate holds inside navigateTree, while Pi
+ * queues typed text (F22). PI_HANDOFF_PAUSE_MS ends the hold early; without it the hold lasts until
  * Pi is killed.
  */
 const pauseIfRequested = async (
   point: PausePoint,
-  ctx: ExtensionCommandContext
+  ctx: ExtensionContext
 ): Promise<void> => {
   if (process.env.PI_HANDOFF_PAUSE_AT !== point) {
     return;
@@ -204,9 +209,9 @@ const navigateToAnchor = async (
   return undefined;
 };
 
-const replayHeldInput = (pi: ExtensionAPI, heldInput: readonly string[]) => {
-  for (const text of heldInput) {
-    pi.sendUserMessage(text, { deliverAs: "followUp" });
+const replayHeldInput = (pi: ExtensionAPI, heldInput: readonly HeldInput[]) => {
+  for (const content of heldInput) {
+    pi.sendUserMessage(content, { deliverAs: "followUp" });
   }
 };
 
@@ -329,6 +334,33 @@ const resumeHandoff = async (
   await runHandoff(pi, state, handoffId, ctx);
 };
 
+const cancelHandoff = async (
+  pi: ExtensionAPI,
+  state: HandoffState,
+  handoffId: string,
+  ctx: ExtensionCommandContext
+): Promise<void> => {
+  await ctx.waitForIdle();
+
+  const handoff = collectHandoffs(ctx.sessionManager.getEntries()).get(
+    handoffId
+  );
+
+  const isBusy = activeHandoffId(state) === handoffId;
+
+  if (!handoff?.intent || handoff.destination || handoff.cancel || isBusy) {
+    ctx.ui.notify(
+      `pi-handoff: handoff ${handoffId} is not a stale intent, so it cannot be cancelled.`,
+      "error"
+    );
+
+    return;
+  }
+
+  appendCancel(pi, handoffId, "user");
+  ctx.ui.notify(`pi-handoff: handoff ${handoffId} cancelled.`, "info");
+};
+
 const textResult = (
   text: string,
   outcome: { isError: true } | { terminate: true }
@@ -398,14 +430,18 @@ export const registerHandoff = (
 
   pi.registerCommand("handoff", {
     description:
-      "Archive the current work and continue from the session anchor. Usage: /handoff <task>, or /handoff resume <handoffId>",
+      "Archive the current work and continue from the session anchor. Usage: /handoff <task>, /handoff resume <handoffId>, or /handoff cancel <handoffId>",
     handler: async (args, ctx) => {
-      const resume = /^resume\s+(?<handoffId>\S+)\s*$/u.exec(args.trim());
+      const action = STALE_ACTION.exec(args.trim())?.groups;
 
-      const resumeId = resume?.groups?.handoffId;
+      if (action?.verb === "resume" && action.handoffId) {
+        await resumeHandoff(pi, state, action.handoffId, ctx);
 
-      if (resumeId !== undefined) {
-        await resumeHandoff(pi, state, resumeId, ctx);
+        return;
+      }
+
+      if (action?.verb === "cancel" && action.handoffId) {
+        await cancelHandoff(pi, state, action.handoffId, ctx);
 
         return;
       }
@@ -451,6 +487,33 @@ export const registerHandoff = (
     handler: async (args, ctx) => {
       await runHandoff(pi, state, args.trim(), ctx);
     },
+  });
+
+  // Text typed while the leaf sits on the anchor would land directly under it, so hold it and
+  // replay it after the continuation (queued_input).
+  pi.on("input", (event, ctx) => {
+    if (state.running === undefined) {
+      return { action: "continue" };
+    }
+
+    const images = event.images ?? [];
+    state.running.heldInput.push(
+      images.length > 0
+        ? [{ text: event.text, type: "text" }, ...images]
+        : event.text
+    );
+    ctx.ui.notify(
+      "pi-handoff: holding your message until the handoff finishes.",
+      "info"
+    );
+
+    return { action: "handled" };
+  });
+
+  pi.on("session_before_tree", async (_event, ctx) => {
+    if (state.running !== undefined) {
+      await pauseIfRequested("during-navigate", ctx);
+    }
   });
 
   pi.on("agent_settled", (event) => {
