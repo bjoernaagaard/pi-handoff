@@ -1,12 +1,33 @@
 {
-  "name": "pi-handoff",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@bjoernaagaard/pi-handoff",
+  "version": "0.1.0",
   "description": "Pi extension: continue work from a small fixed anchor in the same session file, with retrieval of archived branches.",
   "keywords": [
-    "pi-package"
+    "handoff",
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "session"
+  ],
+  "homepage": "https://github.com/bjoernaagaard/pi-handoff#readme",
+  "bugs": {
+    "url": "https://github.com/bjoernaagaard/pi-handoff/issues"
+  },
+  "license": "MIT",
+  "author": "Bjørn Aagaard <aagaardbs@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bjoernaagaard/pi-handoff.git"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "check": "ultracite check",
     "fix": "ultracite fix",
