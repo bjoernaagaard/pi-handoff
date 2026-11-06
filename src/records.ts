@@ -137,3 +137,12 @@ export const readRecord = <T>(
 
   return undefined;
 };
+
+/** The session's one anchor: the first valid anchor entry in file order. */
+export const findAnchor = (
+  entries: readonly SessionEntry[]
+): SessionEntry | undefined =>
+  entries.find(
+    (entry) =>
+      readRecord(entry, CUSTOM_TYPES.anchor, anchorRecord) !== undefined
+  );
