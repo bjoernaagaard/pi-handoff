@@ -54,6 +54,10 @@ Line numbers refer to `PI/dist/...` and `CORE/dist/...` in version 1.5.0. Check 
 | N23 | The session file is written with `appendFileSync` and no fsync. | `core/session-manager.js:801`, `813` |
 | N24 | Nothing is written to a new session file until it holds a user or assistant message. Then the whole buffer is written at once. | `core/session-manager.js:792-815` |
 | N25 | Tree navigation changes only session state. It does not undo file edits or outside actions. | `core/agent-session.js:3279-3433` (no file or process work) |
+| N26 | Pi validates tool arguments with `@earendil-works/pi-schema`, whatever built the schema. | `docs/extensions.md:174-182`; `CHANGELOG.md:14` |
+| N27 | Pi does not map `@earendil-works/pi-schema` for extensions. It maps only pi-ai, pi-agent-core, pi-coding-agent, pi-tui and typebox. A package that imports pi-schema must list it in `dependencies`. | `core/extensions/virtual-modules.js:15-40`; `docs/packages.md` "Declare dependencies" |
+| N28 | `registerTool` types `parameters` as TypeBox `TSchema`. | `core/extensions/types.d.ts:472-484`, `1252` |
+| N29 | Session files are parsed without validation, so entries may be old, forked or edited by hand. | `core/session-manager.js:169-170` (comment) |
 
 ## What this design does not promise
 
@@ -67,58 +71,79 @@ Line numbers refer to `PI/dist/...` and `CORE/dist/...` in version 1.5.0. Check 
 
 Each record is a plain `custom` entry written with `pi.appendEntry`, so none of them reach the model (N12). The only record the model sees is the continuation, a `custom_message`.
 
+Define every record once with `@earendil-works/pi-schema` builders in `src/records.ts`. Take the TypeScript type from `Static`. Compile each schema once at module load. Every record read from `getEntries()` passes through `check` before use, because session files are not validated (N29). A record that fails is logged with `errors()` and treated as missing, so the reconciler never acts on a malformed record.
+
 ```ts
-type HandoffId = string & { readonly __brand: "HandoffId" };
-type EntryId = string & { readonly __brand: "EntryId" };
+import {
+  arr,
+  compile,
+  lit,
+  nullable,
+  obj,
+  oneOf,
+  type Static,
+  str,
+} from "@earendil-works/pi-schema";
 
-interface AnchorRecord {
-  // customType "pi-handoff/anchor"
-  version: 1;
-  createdAt: string;
-}
+const Id = str({ minLength: 1 });
 
-interface IntentRecord {
-  // customType "pi-handoff/intent", written on the source branch
-  version: 1;
-  handoffId: HandoffId;
-  anchorId: EntryId;
-  sourceSessionFile: string;
-  sourceSessionId: string;
-  task: string; // current task, in the user's words
-  constraints: string[]; // exact active constraints, quoted, not summarized
-  openToolCalls: ToolCallNote[]; // see "Uncertain tool effects"
-}
+// customType "pi-handoff/anchor"
+export const AnchorRecord = obj({
+  version: lit(1),
+  createdAt: str({ format: "date-time" }),
+});
 
-interface DestinationRecord {
-  // customType "pi-handoff/destination", parentId = anchorId
-  version: 1;
-  handoffId: HandoffId;
-  intentEntryId: EntryId;
-  sourceLeafId: EntryId; // finalized leaf of the work being archived
-  previousDestinationId: EntryId | null; // explicit order of continuations
-  sourceSessionFile: string;
-  sourceSessionId: string;
-}
+const ToolCallNote = obj({
+  toolCallId: Id,
+  toolName: Id,
+  status: oneOf(["completed", "error", "no-result"]),
+});
 
-interface ContinuationMessage {
-  // custom_message, customType "pi-handoff/continuation"
-  content: string; // task + constraints + source references, rendered for the model
-  details: { handoffId: HandoffId; destinationId: EntryId };
-}
+// customType "pi-handoff/intent", written on the source branch
+export const IntentRecord = obj({
+  version: lit(1),
+  handoffId: Id,
+  anchorId: Id,
+  sourceSessionFile: Id,
+  sourceSessionId: Id,
+  task: Id, // current task, in the user's words
+  constraints: arr(str()), // exact active constraints, quoted, not summarized
+  openToolCalls: arr(ToolCallNote), // see "Uncertain tool effects"
+});
 
-interface CancelRecord {
-  // customType "pi-handoff/cancelled", on the source branch
-  version: 1;
-  handoffId: HandoffId;
-  reason: "aborted-run" | "tree-cancelled" | "navigate-threw" | "user";
-}
+// customType "pi-handoff/destination", parentId = anchorId
+export const DestinationRecord = obj({
+  version: lit(1),
+  handoffId: Id,
+  intentEntryId: Id,
+  sourceLeafId: Id, // finalized leaf of the work being archived
+  previousDestinationId: nullable(Id), // explicit order of continuations
+  sourceSessionFile: Id,
+  sourceSessionId: Id,
+});
 
-interface ToolCallNote {
-  toolCallId: string;
-  toolName: string;
-  status: "completed" | "error" | "no-result";
-}
+// details of custom_message "pi-handoff/continuation"
+export const ContinuationDetails = obj({
+  handoffId: Id,
+  destinationId: Id,
+});
+
+// customType "pi-handoff/cancelled", written on the source branch
+export const CancelRecord = obj({
+  version: lit(1),
+  handoffId: Id,
+  reason: oneOf(["aborted-run", "tree-cancelled", "navigate-threw", "user"]),
+});
+
+export type IntentRecord = Static<typeof IntentRecord>;
+export const intentRecord = compile(IntentRecord); // intentRecord.check(entry.data) narrows to IntentRecord
 ```
+
+Use `oneOf([...])` for string enums, not `union([lit(...), ...])`. A probe against pi-schema 1.5.0 showed that a union of literals reports only the first literal (`expected "aborted-run"`) when a value fails. `obj` builds a closed object, so an unknown field fails `check` and `errors()` reports it as `unknown field`.
+
+The continuation's `content` is the task, the constraints and the source references, rendered as text for the model. The user approves its wording (open decision 4).
+
+Tool parameters stay in TypeBox, because `registerTool` types `parameters` as `TSchema` (N28). Pi checks those arguments with pi-schema anyway (N26). Records use pi-schema builders, because they are plain JSON Schema with types and need no runtime copy of TypeBox.
 
 `sourceLeafId` and `previousDestinationId` record order explicitly. Sibling `parentId` links only show that work hangs off the anchor (N18).
 
@@ -214,14 +239,14 @@ pi-handoff/
 ├── package.json        # "pi.extensions": ["./src/extension.ts"], host packages as "*" peers
 ├── src/
 │   ├── extension.ts    # registers events, the command, and the two tools
-│   ├── records.ts      # typed records and parsing of custom entries at the boundary
+│   ├── records.ts      # pi-schema record schemas, compiled checks, Static types
 │   ├── reconcile.ts    # state of each handoffId from getEntries()
 │   ├── handoff.ts      # command handler, steps 3 to 8
 │   └── search.ts       # handoff_search
 └── HANDOFF.md
 ```
 
-Host packages (`@earendil-works/pi-coding-agent`, `typebox`) stay in `peerDependencies` with `"*"`, as `docs/packages.md` requires.
+Host packages (`@earendil-works/pi-coding-agent`, `typebox`) stay in `peerDependencies` with `"*"`, as `docs/packages.md` requires. `@earendil-works/pi-schema` is in `dependencies`, pinned to `1.5.0` to match the Pi version these findings come from (N27). It has no dependencies of its own.
 
 ## Acceptance demonstrations
 
@@ -250,4 +275,5 @@ Run these against the real `pi` binary in a scratch directory, with `-e ./src/ex
 - Ultracite 8.1.1 with Oxlint, the `anti-slop` plugin and type-aware linting (`oxlint.config.ts`), and Oxfmt.
 - Lefthook pre-commit hook running `bunx ultracite fix` on staged files (`lefthook.yml`).
 - `AGENTS.md` and `.vscode/settings.json` from Ultracite.
+- `@earendil-works/pi-schema@1.5.0` in `dependencies`. A throwaway probe compiled a destination schema, accepted a valid record and listed field errors for a bad one.
 - Run `bun run check` before each commit. Lefthook runs `fix` on its own.
