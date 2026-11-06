@@ -8,6 +8,7 @@ import type { HandoffState } from "./handoff.ts";
 import { reconcile } from "./reconcile.ts";
 import { CUSTOM_TYPES, findAnchor } from "./records.ts";
 import type { AnchorRecord, CompactionAllowedRecord } from "./records.ts";
+import { registerSearch } from "./search.ts";
 
 /**
  * compaction_policy (H2). Threshold compaction would fold the fixed prefix into a summary (F19), so
@@ -67,6 +68,7 @@ export default function piHandoff(pi: ExtensionAPI): void {
   registerHandoff(pi, state);
   registerCapture(pi);
   registerCompactionPolicy(pi);
+  registerSearch(pi);
 
   pi.on("session_start", async (event, ctx) => {
     const isFreshStart = event.reason === "startup" || event.reason === "new";
