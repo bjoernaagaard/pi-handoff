@@ -1,9 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { registerHandoff } from "./handoff.ts";
+import type { HandoffState } from "./handoff.ts";
 import { CUSTOM_TYPES, findAnchor } from "./records.ts";
 import type { AnchorRecord } from "./records.ts";
 
 export default function piHandoff(pi: ExtensionAPI): void {
+  const state: HandoffState = { pendingHandoffId: undefined };
+
+  registerHandoff(pi, state);
+
   pi.on("session_start", (event, ctx) => {
     const isFreshStart = event.reason === "startup" || event.reason === "new";
 

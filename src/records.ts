@@ -138,6 +138,114 @@ export const readRecord = <T>(
   return undefined;
 };
 
+export interface Recorded<T> {
+  entry: SessionEntry;
+  record: T;
+}
+
+/** Every record written for one handoff. Pi does not detect duplicates, so the first of each kind wins. */
+export interface HandoffRecords {
+  handoffId: string;
+  intent?: Recorded<IntentRecord>;
+  destination?: Recorded<DestinationRecord>;
+  continuation?: Recorded<ContinuationDetails>;
+  cancel?: Recorded<CancelRecord>;
+}
+
+const slotFor = (
+  handoffs: Map<string, HandoffRecords>,
+  handoffId: string
+): HandoffRecords => {
+  const existing = handoffs.get(handoffId);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created: HandoffRecords = { handoffId };
+  handoffs.set(handoffId, created);
+
+  return created;
+};
+
+const addRecord = (
+  handoffs: Map<string, HandoffRecords>,
+  entry: SessionEntry
+): void => {
+  const intent = readRecord(entry, CUSTOM_TYPES.intent, intentRecord);
+
+  if (intent) {
+    const slot = slotFor(handoffs, intent.handoffId);
+    slot.intent ??= { entry, record: intent };
+
+    return;
+  }
+
+  const destination = readRecord(
+    entry,
+    CUSTOM_TYPES.destination,
+    destinationRecord
+  );
+
+  if (destination) {
+    const slot = slotFor(handoffs, destination.handoffId);
+    slot.destination ??= { entry, record: destination };
+
+    return;
+  }
+
+  const continuation = readRecord(
+    entry,
+    CUSTOM_TYPES.continuation,
+    continuationDetails
+  );
+
+  if (continuation) {
+    const slot = slotFor(handoffs, continuation.handoffId);
+    slot.continuation ??= { entry, record: continuation };
+
+    return;
+  }
+
+  const cancel = readRecord(entry, CUSTOM_TYPES.cancelled, cancelRecord);
+
+  if (cancel) {
+    const slot = slotFor(handoffs, cancel.handoffId);
+    slot.cancel ??= { entry, record: cancel };
+  }
+};
+
+/**
+ * Groups handoff records by handoffId, in file order. A destination counts only when it sits
+ * directly under the anchor its intent names, as the destination contract requires.
+ */
+export const collectHandoffs = (
+  entries: readonly SessionEntry[]
+): Map<string, HandoffRecords> => {
+  const handoffs = new Map<string, HandoffRecords>();
+
+  for (const entry of entries) {
+    addRecord(handoffs, entry);
+  }
+
+  for (const handoff of handoffs.values()) {
+    const { destination, intent } = handoff;
+
+    const misplaced =
+      destination !== undefined &&
+      destination.entry.parentId !== intent?.record.anchorId;
+
+    if (misplaced) {
+      console.error(
+        `pi-handoff: ignoring destination ${destination.entry.id}, it is not under the anchor of handoff ${handoff.handoffId}`
+      );
+      handoff.destination = undefined;
+    }
+  }
+
+  return handoffs;
+};
+
 /** The session's one anchor: the first valid anchor entry in file order. */
 export const findAnchor = (
   entries: readonly SessionEntry[]
