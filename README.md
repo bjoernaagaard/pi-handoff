@@ -31,7 +31,7 @@ The package is only on GitHub, not on npm. Install it with Pi:
 pi install git:github.com/bjoernaagaard/pi-handoff
 ```
 
-Pi clones the repository, installs its dependencies, and loads the extension on the next start. `pi update --extensions` moves the clone to the newest commit on `main`. To stay on a release instead, add its tag, e.g. `git:github.com/bjoernaagaard/pi-handoff@v0.2.0`. To try the package for one session without saving it to your settings, run `pi -e git:github.com/bjoernaagaard/pi-handoff`.
+Pi clones the repository, installs its dependencies, and loads the extension on the next start. `pi update --extensions` moves the clone to the newest commit on `main`. To stay on a release instead, add its tag, e.g. `git:github.com/bjoernaagaard/pi-handoff@v0.2.1`. To try the package for one session without saving it to your settings, run `pi -e git:github.com/bjoernaagaard/pi-handoff`.
 
 The extension needs a session file, so it does nothing useful with `--no-session`.
 
@@ -40,7 +40,7 @@ The extension needs a session file, so it does nothing useful with `--no-session
 You can install a signed archive instead of the git package. You need [Packslip](https://packslip.dev/docs/install/), the GitHub CLI, and `jq`. Run these commands in an empty directory:
 
 ```bash
-version=0.2.0
+version=0.2.1
 tag="v$version"
 archive="pi-handoff-$version.tar.gz"
 install_dir="$HOME/.local/share/pi-handoff/$version"
@@ -238,7 +238,7 @@ npm run check
 pi -e ./src/extension.ts
 ```
 
-The pre-commit hook runs `npx ultracite fix` on staged files. Three environment variables help when you demonstrate or debug a handoff by hand:
+Run `npx lefthook install` once after `npm install` to set up the pre-commit hook, which runs `npx ultracite fix` on staged files. The package has no `prepare` script on purpose, because Pi installs git packages without dev dependencies. Three environment variables help when you demonstrate or debug a handoff by hand:
 
 | Variable | Effect |
 | --- | --- |

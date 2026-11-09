@@ -1,6 +1,6 @@
 {
   "name": "@bjoernaagaard/pi-handoff",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Pi extension: continue work from a small fixed anchor in the same session file, with retrieval of archived branches.",
   "keywords": [
@@ -28,8 +28,7 @@
   "type": "module",
   "scripts": {
     "check": "ultracite check",
-    "fix": "ultracite fix",
-    "prepare": "lefthook install"
+    "fix": "ultracite fix"
   },
   "dependencies": {
     "@earendil-works/pi-schema": "1.5.0"
