@@ -1,0 +1,102 @@
+name: Signed release
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: signed-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.archive.outputs.version }}
+      bundle: ${{ steps.verify.outputs.bundle }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare the release archive
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.version' package.json)"
+          [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+          [[ "$GITHUB_REF_NAME" == "v$version" ]]
+          archive="dist/pi-handoff-$version.tar.gz"
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=pi-handoff/ HEAD > "$archive"
+          printf '[[artifact]]\npath = "%s"\nportable = true\nbin = []\n' "$archive" > "$RUNNER_TEMP/packslip-release.toml"
+          printf 'path=%s\nversion=%s\n' "$archive" "$version" >> "$GITHUB_OUTPUT"
+      - name: Sign the release
+        id: packslip
+        uses: jdx/packslip@44e50e5f64551234b4a382d991bd7f7f7d021d06
+        with:
+          artifacts: ${{ steps.archive.outputs.path }}
+          manifest: ${{ runner.temp }}/packslip-release.toml
+          upload: "false"
+      - name: Verify the signed archive
+        id: verify
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+          BUNDLE: ${{ steps.packslip.outputs.bundle }}
+          VERSION: ${{ steps.archive.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/packslip-release.yml@$GITHUB_REF"
+          packslip verify "$BUNDLE" --identity "$identity" --issuer https://token.actions.githubusercontent.com --artifact "$ARCHIVE" --json > "$RUNNER_TEMP/packslip-verified.json"
+          jq -e --arg project "github.com/$GITHUB_REPOSITORY" --arg version "$VERSION" --arg artifact "${ARCHIVE##*/}" '.project == $project and .version == $version and (.checked_artifacts | index($artifact) != null)' "$RUNNER_TEMP/packslip-verified.json"
+          printf 'bundle=%s\n' "$(base64 -w0 "$BUNDLE")" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify and upload the signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.sign.outputs.version }}
+          SIGNED_BUNDLE: ${{ needs.sign.outputs.bundle }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="pi-handoff-$VERSION.tar.gz"
+          bundle="packslip.sigstore.json"
+          identity="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/packslip-release.yml@$GITHUB_REF"
+          git archive --format=tar.gz --prefix=pi-handoff/ HEAD > "$archive"
+          printf '%s' "$SIGNED_BUNDLE" | base64 -d > "$bundle"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release-assets.json"
+          mkdir -p "$RUNNER_TEMP/existing-release"
+          if jq -e --arg name "$bundle" 'any(.assets[]; .name == $name)' "$RUNNER_TEMP/release-assets.json" > /dev/null; then
+            gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "$bundle" --dir "$RUNNER_TEMP/existing-release"
+            cp "$RUNNER_TEMP/existing-release/$bundle" "$bundle"
+          fi
+          gh attestation verify "$archive" --bundle "$bundle" --repo "$GITHUB_REPOSITORY" --predicate-type https://packslip.dev/release/v1 --cert-identity "$identity" --format json > "$RUNNER_TEMP/packslip-verified.json"
+          jq -e --arg project "github.com/$GITHUB_REPOSITORY" --arg version "$VERSION" --arg archive "$archive" --arg commit "$GITHUB_SHA" --arg tag "$GITHUB_REF_NAME" 'any(.[]; .verificationResult.statement.predicate.project == $project and .verificationResult.statement.predicate.version == $version and .verificationResult.statement.predicate.source.commit == $commit and .verificationResult.statement.predicate.source.tag == $tag and (.verificationResult.statement.subject | any(.name == $archive)))' "$RUNNER_TEMP/packslip-verified.json"
+          for file in "$archive" "$bundle"; do
+            if jq -e --arg name "$file" 'any(.assets[]; .name == $name)' "$RUNNER_TEMP/release-assets.json" > /dev/null; then
+              if [[ ! -e "$RUNNER_TEMP/existing-release/$file" ]]; then
+                gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "$file" --dir "$RUNNER_TEMP/existing-release"
+              fi
+              cmp "$file" "$RUNNER_TEMP/existing-release/$file"
+            else
+              gh release upload "$GITHUB_REF_NAME" "$file" --repo "$GITHUB_REPOSITORY"
+            fi
+          done

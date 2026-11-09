@@ -1,6 +1,7 @@
 {
   "name": "@bjoernaagaard/pi-handoff",
   "version": "0.1.0",
+  "private": true,
   "description": "Pi extension: continue work from a small fixed anchor in the same session file, with retrieval of archived branches.",
   "keywords": [
     "handoff",
@@ -25,9 +26,6 @@
     "LICENSE"
   ],
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "check": "ultracite check",
     "fix": "ultracite fix",

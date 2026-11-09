@@ -25,19 +25,41 @@ Each request carries the fixed prefix up to the anchor, and then only the curren
 
 ## Install
 
-Install the package into your Pi settings:
+The package is only on GitHub, not on npm. Install it with Pi:
 
 ```bash
-pi install npm:@bjoernaagaard/pi-handoff
+pi install git:github.com/bjoernaagaard/pi-handoff
 ```
 
-You can also try it for one run without changing your settings:
-
-```bash
-pi -e npm:@bjoernaagaard/pi-handoff
-```
+Pi clones the repository, installs its dependencies, and loads the extension on the next start. `pi update --extensions` moves the clone to the newest commit on `main`. To stay on a release instead, add its tag, e.g. `git:github.com/bjoernaagaard/pi-handoff@v0.1.0`. To try the package for one session without saving it to your settings, run `pi -e git:github.com/bjoernaagaard/pi-handoff`.
 
 The extension needs a session file, so it does nothing useful with `--no-session`.
+
+### Verify a release archive
+
+You can install a signed archive instead of the git package. You need [Packslip](https://packslip.dev/docs/install/), the GitHub CLI, and `jq`. Run these commands in an empty directory:
+
+```bash
+version=0.1.0
+tag="v$version"
+archive="pi-handoff-$version.tar.gz"
+install_dir="$HOME/.local/share/pi-handoff/$version"
+gh release download "$tag" --repo bjoernaagaard/pi-handoff --pattern "$archive" --pattern packslip.sigstore.json &&
+packslip verify packslip.sigstore.json \
+  --identity "https://github.com/bjoernaagaard/pi-handoff/.github/workflows/packslip-release.yml@refs/tags/$tag" \
+  --issuer https://token.actions.githubusercontent.com \
+  --artifact "$archive" --json > packslip-verified.json &&
+jq -e --arg version "$version" --arg archive "$archive" \
+  '.project == "github.com/bjoernaagaard/pi-handoff" and .version == $version and (.checked_artifacts | index($archive) != null)' \
+  packslip-verified.json &&
+mkdir -p "$(dirname "$install_dir")" &&
+mkdir "$install_dir" &&
+tar -xzf "$archive" -C "$install_dir" &&
+(cd "$install_dir/pi-handoff" && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund) &&
+pi install "$install_dir/pi-handoff"
+```
+
+Packslip checks the archive, not the dependencies npm downloads. Pi does not update local packages. To update, verify and install the new archive, then remove the old local package with `pi remove`. Pi treats the new path as a separate package, so it does not show the old path's changelog updates.
 
 ## Usage
 
