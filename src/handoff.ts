@@ -47,7 +47,7 @@ export interface HandoffState {
 }
 
 /** The handoff that blocks a new one: recorded but not dispatched, or in progress. */
-const activeHandoffId = (state: HandoffState): string | undefined =>
+export const activeHandoffId = (state: HandoffState): string | undefined =>
   state.pendingHandoffId ?? state.running?.handoffId;
 
 type PausePoint = "during-navigate" | "after-navigate" | "after-destination";
@@ -158,6 +158,88 @@ const writeIntent = (
   pi.appendEntry(CUSTOM_TYPES.intent, intent);
 
   return { handoffId: intent.handoffId, ok: true };
+};
+
+// Pi compacts by default when the context reaches the window minus a 16,384 token reserve.
+// The automatic handoff queues at that same point, or at 85 percent on windows where 85
+// percent comes first, so it is recorded before Pi would ask to compact.
+const RESERVE_TOKENS = 16_384;
+const AUTO_HANDOFF_PERCENT = 85;
+
+export const AUTO_HANDOFF_TASK =
+  "Continue the work you were doing before this automatic handoff. Work out what remains from the archived work, search it with handoff_search when you need a detail, and finish the task.";
+
+const AUTO_HANDOFF_CONSTRAINT =
+  "This handoff started automatically because the context was nearly full. The user wrote no new task for it. Do not ask the user to restate the task.";
+
+/**
+ * True when a user message sits after the newest destination. An automatic handoff needs
+ * fresh user work to continue, and this stops a second automatic handoff on the branch the
+ * first one just created, where only the continuation message follows the destination.
+ */
+const hasUserWorkSinceLastHandoff = (sessionManager: SessionView): boolean => {
+  const entries = sessionManager.getEntries();
+
+  const lastDestination = orderedDestinations(collectHandoffs(entries)).at(-1);
+
+  if (!lastDestination) {
+    return true;
+  }
+
+  const destinationIndex = entries.findIndex(
+    (entry) => entry.id === lastDestination.entry.id
+  );
+
+  return entries
+    .slice(destinationIndex + 1)
+    .some((entry) => entry.type === "message" && entry.message.role === "user");
+};
+
+/**
+ * Records an automatic handoff when the context is nearly full, and returns true when it
+ * recorded one. The caller dispatches it at agent_settled through the same path as a handoff
+ * the model asked for, so the run in progress always finishes first.
+ */
+const queueAutomaticHandoff = (
+  pi: ExtensionAPI,
+  state: HandoffState,
+  ctx: ExtensionContext
+): boolean => {
+  if (activeHandoffId(state) !== undefined) {
+    return false;
+  }
+
+  const usage = ctx.getContextUsage();
+
+  if (!usage || usage.tokens === null) {
+    return false;
+  }
+
+  const percent = (usage.tokens / usage.contextWindow) * 100;
+
+  const nearlyFull =
+    usage.tokens >= usage.contextWindow - RESERVE_TOKENS ||
+    percent >= AUTO_HANDOFF_PERCENT;
+
+  if (!nearlyFull || !hasUserWorkSinceLastHandoff(ctx.sessionManager)) {
+    return false;
+  }
+
+  const result = writeIntent(pi, ctx.sessionManager, AUTO_HANDOFF_TASK, [
+    AUTO_HANDOFF_CONSTRAINT,
+  ]);
+
+  if (!result.ok) {
+    return false;
+  }
+
+  state.pendingHandoffId = result.handoffId;
+  ctx.ui.notify(
+    `pi-handoff: the context is ${Math.round(percent)} percent full. Handoff ${result.handoffId} will continue from the anchor when this run ends.`,
+    "info"
+  );
+
+  return true;
 };
 
 export const appendCancel = (
@@ -516,7 +598,17 @@ export const registerHandoff = (
     }
   });
 
-  pi.on("agent_settled", (event) => {
+  // Queue the automatic handoff as soon as a turn reports a nearly full context. Dispatch
+  // still waits for agent_settled, so a run that keeps going is never cut off mid-turn.
+  pi.on("turn_end", (_event, ctx) => {
+    queueAutomaticHandoff(pi, state, ctx);
+  });
+
+  pi.on("agent_settled", (event, ctx) => {
+    if (state.pendingHandoffId === undefined && !event.aborted) {
+      queueAutomaticHandoff(pi, state, ctx);
+    }
+
     const handoffId = state.pendingHandoffId;
 
     if (handoffId === undefined) {
