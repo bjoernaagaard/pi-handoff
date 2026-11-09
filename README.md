@@ -31,7 +31,7 @@ The package is only on GitHub, not on npm. Install it with Pi:
 pi install git:github.com/bjoernaagaard/pi-handoff
 ```
 
-Pi clones the repository, installs its dependencies, and loads the extension on the next start. `pi update --extensions` moves the clone to the newest commit on `main`. To stay on a release instead, add its tag, e.g. `git:github.com/bjoernaagaard/pi-handoff@v0.1.0`. To try the package for one session without saving it to your settings, run `pi -e git:github.com/bjoernaagaard/pi-handoff`.
+Pi clones the repository, installs its dependencies, and loads the extension on the next start. `pi update --extensions` moves the clone to the newest commit on `main`. To stay on a release instead, add its tag, e.g. `git:github.com/bjoernaagaard/pi-handoff@v0.2.0`. To try the package for one session without saving it to your settings, run `pi -e git:github.com/bjoernaagaard/pi-handoff`.
 
 The extension needs a session file, so it does nothing useful with `--no-session`.
 
@@ -40,7 +40,7 @@ The extension needs a session file, so it does nothing useful with `--no-session
 You can install a signed archive instead of the git package. You need [Packslip](https://packslip.dev/docs/install/), the GitHub CLI, and `jq`. Run these commands in an empty directory:
 
 ```bash
-version=0.1.0
+version=0.2.0
 tag="v$version"
 archive="pi-handoff-$version.tar.gz"
 install_dir="$HOME/.local/share/pi-handoff/$version"
@@ -64,6 +64,8 @@ Packslip checks the archive, not the dependencies npm downloads. Pi does not upd
 ## Usage
 
 You can start a handoff yourself with the `/handoff` command, or the model can start one with the `handoff` tool. Both write the same record, and both continue the work once the current run ends.
+
+A handoff also starts on its own when the context is nearly full. The extension reads the context usage Pi reports after each turn. At 85 percent full, or when the remaining space reaches the 16,384 token reserve Pi keeps for compaction, whichever comes first, it records an automatic handoff. The current run finishes first. The continuation then tells the next run to work out what remains from the archived work and finish it, so you do not need to write a task or run a command. An automatic handoff needs a user message after the previous handoff, so the branch a handoff just created never triggers another one on its own.
 
 | Entry point | Who uses it | What it does |
 | --- | --- | --- |

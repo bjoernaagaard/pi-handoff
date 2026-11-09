@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { registerHandoff } from "./handoff.ts";
+import { activeHandoffId, registerHandoff } from "./handoff.ts";
 import type { HandoffState } from "./handoff.ts";
 import { reconcile } from "./reconcile.ts";
 import { CUSTOM_TYPES, findAnchor } from "./records.ts";
@@ -15,11 +15,16 @@ import { registerSearch } from "./search.ts";
  * it is cancelled and the user is told to hand off. Overflow and manual compaction go ahead, because
  * cancelling overflow would stall the turn.
  */
-const registerCompactionPolicy = (pi: ExtensionAPI): void => {
+const registerCompactionPolicy = (
+  pi: ExtensionAPI,
+  state: HandoffState
+): void => {
   pi.on("session_before_compact", (event, ctx) => {
     if (event.reason === "threshold") {
       ctx.ui.notify(
-        "pi-handoff: the context is nearly full. Automatic compaction was skipped. Run /handoff <task> to continue from the anchor.",
+        activeHandoffId(state) === undefined
+          ? "pi-handoff: the context is nearly full. Automatic compaction was skipped. A handoff will continue from the anchor when this run ends."
+          : "pi-handoff: the context is nearly full. Automatic compaction was skipped. The queued handoff will continue from the anchor when this run ends.",
         "warning"
       );
 
@@ -67,7 +72,7 @@ export default function piHandoff(pi: ExtensionAPI): void {
 
   registerHandoff(pi, state);
   registerCapture(pi);
-  registerCompactionPolicy(pi);
+  registerCompactionPolicy(pi, state);
   registerSearch(pi);
 
   pi.on("session_start", async (event, ctx) => {
@@ -82,7 +87,15 @@ export default function piHandoff(pi: ExtensionAPI): void {
       pi.appendEntry(CUSTOM_TYPES.anchor, anchor);
     }
 
-    ctx.ui.notify("pi-handoff loaded", "info");
+    if (findAnchor(ctx.sessionManager.getEntries())) {
+      ctx.ui.notify("pi-handoff loaded", "info");
+    } else {
+      ctx.ui.notify(
+        "pi-handoff: this session has no anchor, because it started before pi-handoff was active. Start a new session to use handoffs.",
+        "warning"
+      );
+    }
+
     await reconcile(pi, state, ctx);
   });
 }
